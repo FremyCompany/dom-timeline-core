@@ -70,6 +70,11 @@ void function() {
 		future: domHistoryFuture,
 		
 		// ------------------------------------------------------------------------------------------------------------------
+		// this MutationRecord array contains dom changes that were canceled just after execution, due to a future already existing
+		// ------------------------------------------------------------------------------------------------------------------
+		lostFuture: [],
+		
+		// ------------------------------------------------------------------------------------------------------------------
 		// takes the last dom change added to the past history, undoes it, and add it to the future history
 		// ------------------------------------------------------------------------------------------------------------------
 		// note: this will lock the page in past history, potentially breaking page scripts
@@ -151,7 +156,14 @@ void function() {
 	);
 	
 	// enable callstack tracking
-	if(domTimelineOptions.enableCallstackTracking) enableCallstackTracking();
+	if(domTimelineOptions.enableCallstackTracking) {
+		console.groupCollapsed("domTimelineOptions.enableCallstackTracking==true");
+		try {
+			enableCallstackTracking();
+		} finally {
+			console.groupEnd();
+		}
+	}
 	
 	// notify everything went fine
 	console.log("setup completed without error"); return;
@@ -164,7 +176,14 @@ void function() {
 		
 		// we cancel immediately any mutation which would be added to the past history when there is already a future
 		if(domHistoryFuture.length > 0) {
-			console.warn("DOM Mutations were canceled because we are reviewing the past and there is already a future");
+			
+			if(domHistory.lostFuture.length == 0) {
+				console.warn("DOM Mutations were canceled because we are reviewing the past and there is already a future (see domHistory.lostFuture)");
+				domHistory.lostFuture.push.apply(domHistory.lostFuture, records);
+			} else {
+				domHistory.lostFuture.push.apply(domHistory.lostFuture, records);
+			}
+			
 			try {
 				isDoingOffRecordsMutations++;
 				for(var i = records.length; i--;) {
@@ -176,6 +195,7 @@ void function() {
 				o.takeRecords();
 			}
 			return;
+			
 		}
 		
 		// otherwise, we post process the records
@@ -242,7 +262,9 @@ void function() {
 		if(records && records.length) {
 			
 			postProcessRecords(records,stack);
-			domTimelineOptions.considerLoggingRecords("unclaimed",records,stack);
+			if(records.length) {
+				domTimelineOptions.considerLoggingRecords("unclaimed",records,stack);
+			}
 			
 		}
 	}
@@ -255,7 +277,9 @@ void function() {
 		if(records && records.length) {
 			
 			postProcessRecords(records,stack);
-			domTimelineOptions.considerLoggingRecords(claim,records,stack);
+			if(records.length) {
+				domTimelineOptions.considerLoggingRecords(claim,records,stack);
+			}
 			
 		}
 	}
@@ -549,7 +573,7 @@ void function() {
 		
 		if(animateDOMHistory.timer) { 
 			console.log("stopping animation (we may be locked in the past)");
-			clearInterval(animateDOMHistory.timer); 
+			window.clearInterval(animateDOMHistory.timer); 
 			animateDOMHistory.timer = 0;
 			return;
 		}
@@ -564,7 +588,7 @@ void function() {
 			domHistory.undo();
 		}
 		
-		animateDOMHistory.timer = setInterval(function() { 
+		animateDOMHistory.timer = window.setInterval(function() { 
 			if(domHistory.future.length == 0) {
 				if(wait == 0) console.log('start waiting');
 				if(wait++ >= wait3s) {
