@@ -14,11 +14,16 @@ var domTimelineOptions = domTimelineOptions || {
 	// ------------------------------------------------------------------------------------------------------------------
 	// note: this incurs an important dom performance impact on the page
 	// ------------------------------------------------------------------------------------------------------------------
-	// note: when this script is not run first on this page, this feature may not work completely
+	// note: when this script is not run first on the page, this feature may not work completely
 	//       to make sure it is run first, put a breakpoint before the first script of the page, 
 	//       and execute it in the console before continuing the page execution
 	// ------------------------------------------------------------------------------------------------------------------
 	enableCallstackTracking: true,
+	
+	// ------------------------------------------------------------------------------------------------------------------
+	// when false, the script won't start recording changes until you press F9 or call domHistory.startRecording()
+	// ------------------------------------------------------------------------------------------------------------------
+	startRecordingOnF9: true,
 	
 	// ------------------------------------------------------------------------------------------------------------------
 	// this function is called whenever (claimed or unclaimed) change records are being added to the dom history
@@ -124,6 +129,12 @@ void function() {
 				o.takeRecords();
 			}
 			
+		},
+		
+		startRecording() {
+			if(isDoingOffRecordsMutations >= 1e9) {
+				isDoingOffRecordsMutations -= 1e9;
+			}
 		}
 		
 	};
@@ -154,6 +165,12 @@ void function() {
 			characterDataOldValue: true 
 		}
 	);
+	
+	// disable recording if asked to do some
+	if(domTimelineOptions.startRecordingOnF9) {
+		isDoingOffRecordsMutations += 1e9;
+		window.addEventListener('keydown', e=>{ if(e.keyCode==120) domHistory.startRecording(); }, true);
+	}
 	
 	// enable callstack tracking
 	if(domTimelineOptions.enableCallstackTracking) {
@@ -259,8 +276,9 @@ void function() {
 	function logUnclaimedMutations(inputRecords) {
 		var stack = undefined;
 		var records = inputRecords || o.takeRecords(); 
-		if(records && records.length) {
+		if(records && records.length && isDoingOffRecordsMutations<1e9) {
 			
+			console.log(isDoingOffRecordsMutations);
 			postProcessRecords(records,stack);
 			if(records.length) {
 				domTimelineOptions.considerLoggingRecords("unclaimed",records,stack);
