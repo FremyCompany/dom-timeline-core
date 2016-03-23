@@ -23,7 +23,7 @@ var domTimelineOptions = domTimelineOptions || {
 	// ------------------------------------------------------------------------------------------------------------------
 	// when false, the script won't start recording changes until you press F9 or call domHistory.startRecording()
 	// ------------------------------------------------------------------------------------------------------------------
-	startRecordingOnF9: true,
+	startRecordingOnF9: false,
 	
 	// ------------------------------------------------------------------------------------------------------------------
 	// this function is called whenever (claimed or unclaimed) change records are being added to the dom history
