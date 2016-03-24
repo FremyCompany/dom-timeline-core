@@ -21,7 +21,7 @@ var domTimelineOptions = domTimelineOptions || {
 	enableCallstackTracking: true,
 	
 	// ------------------------------------------------------------------------------------------------------------------
-	// when false, the script won't start recording changes until you press F9 or call domHistory.startRecording()
+	// when true, the script won't start recording changes until you press F9 or call domHistory.startRecording()
 	// ------------------------------------------------------------------------------------------------------------------
 	startRecordingOnF9: false,
 	
