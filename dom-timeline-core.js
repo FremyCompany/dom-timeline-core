@@ -21,9 +21,9 @@ var domTimelineOptions = domTimelineOptions || {
 	enableCallstackTracking: true,
 	
 	// ------------------------------------------------------------------------------------------------------------------
-	// when true, the script won't start recording changes until you press F9 or call domHistory.startRecording()
+	// when false, the script won't start recording changes until you press F9 or call domHistory.startRecording()
 	// ------------------------------------------------------------------------------------------------------------------
-	startRecordingOnF9: false,
+	startRecordingImmediately: true,
 	
 	// ------------------------------------------------------------------------------------------------------------------
 	// this function is called whenever (claimed or unclaimed) change records are being added to the dom history
@@ -32,7 +32,7 @@ var domTimelineOptions = domTimelineOptions || {
 	considerLoggingRecords(claim,records,stack) {
 		console.groupCollapsed(claim+" ["+records.length+"]");{
 			for(let record of records) { console.log(record); }
-			console.log(stack);
+			console.log(stack||"(no known stack)");
 			console.groupEnd();
 		};
 	},
@@ -41,12 +41,24 @@ var domTimelineOptions = domTimelineOptions || {
 	// this function is being called inline when a change record is being discovered
 	// its primary usage is to allow you to break into the debugger in the context of the change
 	// ------------------------------------------------------------------------------------------------------------------
-	// note: this feature requires 'enableCallstackTracking' on and working (otherwise some changes will be unclaimed)
+	// note: this feature requires 'enableCallstackTracking' being on and working (otherwise some changes will be unclaimed)
 	// ------------------------------------------------------------------------------------------------------------------
 	considerDomBreakpoint(m) {
 		//if(m.attributeName=='style' && m.target.id=='configStackPage_1' && m.newValue && m.newValue.indexOf('block')>=0) {
 		//	debugger;
 		//}
+	},
+	
+	// ------------------------------------------------------------------------------------------------------------------
+	// this function is being called inline when a change record is being discovered (before it is added to history)
+	// its primary usage is to allow you to return "false" and avoid the change to clutter the history
+	// ------------------------------------------------------------------------------------------------------------------
+	// note: not including a change in the history means it cannot be undone/redone! 
+	// note: this feature may be easier to use if 'enableCallstackTracking' is on and working
+	// ------------------------------------------------------------------------------------------------------------------
+	considerIgnoringRecord(m) {
+		var shouldIgnore = false;
+		return shouldIgnore;
 	}
 	
 };
@@ -58,6 +70,7 @@ void function() {
 	"use strict";
 	
 	// prepare to store the mutations
+	let recordingStartDate = (window.performance ? window.performance.now() : Date.now());
 	var domHistoryPast = [];
 	var domHistoryFuture = [];
 	var domHistory = window.domHistory = {
@@ -91,7 +104,7 @@ void function() {
 			
 			// get mutation to undo
 			var mutation = domHistoryPast.pop();
-			if(!mutation) return;
+			if(!mutation) return false;
 			
 			// undo it
 			try {
@@ -102,6 +115,8 @@ void function() {
 				isDoingOffRecordsMutations--;
 				o.takeRecords();
 			}
+			
+			return true;
 			
 		},
 		
@@ -117,7 +132,7 @@ void function() {
 			
 			// get mutation to undo
 			var mutation = domHistoryFuture.pop();
-			if(!mutation) return;
+			if(!mutation) return false;
 			
 			// undo it
 			try {
@@ -129,12 +144,40 @@ void function() {
 				o.takeRecords();
 			}
 			
+			return true;
+			
 		},
 		
 		startRecording() {
+			if(isRecordingStopped) {
+				isRecordingStopped = false;
+				return true;
+			}
 			if(isDoingOffRecordsMutations >= 1e9) {
 				isDoingOffRecordsMutations -= 1e9;
+				recordingStartDate = (window.performance ? window.performance.now() : Date.now());
+				return true;
 			}
+			return false;
+		},
+		
+		stopRecording() {
+			if(isDoingOffRecordsMutations >= 1e9) {
+				return false;
+			}
+			if(!isRecordingStopped) {
+				isRecordingStopped = true;
+				return false;
+			}
+			return true;
+		},
+		
+		get isRecording() {
+			return !(isRecordingStopped || isDoingOffRecordsMutations >= 1e9);
+		},
+		
+		get isRecordingStopped() {
+			return isRecordingStopped;
 		}
 		
 	};
@@ -143,6 +186,7 @@ void function() {
 	let o = new MutationObserver(logUnclaimedMutations);
 	
 	// allow things to be off-records
+	let isRecordingStopped = false;
 	let isDoingOffRecordsMutations = +false;
 	function getAttribute(target, attributeName) {
 		try {
@@ -167,7 +211,7 @@ void function() {
 	);
 	
 	// disable recording if asked to do some
-	if(domTimelineOptions.startRecordingOnF9) {
+	if(!domTimelineOptions.startRecordingImmediately) {
 		isDoingOffRecordsMutations += 1e9;
 		window.addEventListener('keydown', e=>{ if(e.keyCode==120) domHistory.startRecording(); }, true);
 	}
@@ -189,10 +233,10 @@ void function() {
 	//
 	// save the newValue attribute on records to enable redo, and add them to history
 	//
-	function postProcessRecords(records,stack) {
+	function postProcessRecords(records,stack,claim) {
 		
 		// we cancel immediately any mutation which would be added to the past history when there is already a future
-		if(domHistoryFuture.length > 0) {
+		if(domHistoryFuture.length > 0 || isRecordingStopped) {
 			
 			if(domHistory.lostFuture.length == 0) {
 				console.warn("DOM Mutations were canceled because we are reviewing the past and there is already a future (see domHistory.lostFuture)");
@@ -232,13 +276,23 @@ void function() {
 				
 			}
 			
-			domHistoryPast.push(record);
-			
+			record.claim = claim;
 			record.stack = stack;
+			record.timestamp = (window.performance ? window.performance.now() : Date.now())-recordingStartDate;
+			
+			// give the owner an opportunity to hide the record
+			if(domTimelineOptions.considerIgnoringRecord(record)) {
+				records.length = 0;
+			} else {
+				domHistoryPast.push(record);
+			}
+			
+			// give the owner an opportunity to break into javascript
 			domTimelineOptions.considerDomBreakpoint(record);
 			
 		} else {
 		
+			var containsAnyNull = false;
 			var latestAttributeValues = new Map();
 			var latestCharacterDataValues = new Map();
 			for(var i = records.length; i--;) {
@@ -263,9 +317,27 @@ void function() {
 				}
 				
 				record.stack = stack;
+				
+				// give the owner an opportunity to hide the record
+				if(domTimelineOptions.considerIgnoringRecord(record)) {
+					records[i] = null; containsAnyNull = true;
+				}
+				
+				// give the owner an opportunity to break into javascript
 				domTimelineOptions.considerDomBreakpoint(record);
 				
 			}
+			
+			// remove from the records anything that has been ignored
+			if(containsAnyNull) {
+				for(var i=0, j=0; i--;) {
+					if(records[i] !== null) {
+						records[j++] = newRecords[i];
+					}
+				}
+				records.length = j;
+			}
+			
 			domHistoryPast.push.apply(domHistoryPast, records);
 		}
 	}
@@ -274,14 +346,13 @@ void function() {
 	// log mutations which are not claimed by a monitored function call
 	// 
 	function logUnclaimedMutations(inputRecords) {
-		var stack = undefined;
+		var stack = undefined, claim = "unclaimed";
 		var records = inputRecords || o.takeRecords(); 
 		if(records && records.length && isDoingOffRecordsMutations<1e9) {
 			
-			console.log(isDoingOffRecordsMutations);
-			postProcessRecords(records,stack);
+			postProcessRecords(records,stack,claim);
 			if(records.length) {
-				domTimelineOptions.considerLoggingRecords("unclaimed",records,stack);
+				domTimelineOptions.considerLoggingRecords(claim,records,stack);
 			}
 			
 		}
@@ -294,7 +365,7 @@ void function() {
 		var records = o.takeRecords();
 		if(records && records.length) {
 			
-			postProcessRecords(records,stack);
+			postProcessRecords(records,stack,claim);
 			if(records.length) {
 				domTimelineOptions.considerLoggingRecords(claim,records,stack);
 			}
@@ -317,7 +388,7 @@ void function() {
 		if("style" in window.HTMLElement.prototype) wrapStyleInProxy(window.HTMLElement);
 		
 		// otherwhise, we can hook most properties and functions from those classes
-		for(let protoName of ['SVGElement','HTMLElement','Element','Node','Range','Selection',classListInstance,styleInstance]) {
+		for(let protoName of ['SVGElement','HTMLElement','Element','Node','Range','Selection','HTMLImageElement','Image',classListInstance,styleInstance]) {
 			try{
 				let proto = (typeof(protoName) == 'string') ? (window[protoName].prototype) : Object.getPrototypeOf(protoName);
 				protoName = (typeof(protoName) == 'string') ? protoName : Object.prototype.toString.call(protoName).replace(/\[object (.*)\]/,'$1');
@@ -328,15 +399,15 @@ void function() {
 					
 					let prop = Object.getOwnPropertyDescriptor(proto, propName);
 					if("value" in prop) { 
-						if(typeof(prop.value) == 'function') {
+						if(typeof(prop.value) == 'function' && propName != "constructor") {
 							
 							console.log(`patching ${protoName}.prototype.${propName} as a function`);
 							try {
 							
 								proto[propName] = function() {
 									isDoingOffRecordsMutations || logUnclaimedMutations();
-									let result = prop.value.apply(this, arguments);
-									isDoingOffRecordsMutations || logClaimedMutations("set "+propName, new Error().stack.replace(/^Error *\r?\n/i,''));
+									let result = prop.value.apply(this.__this||this, arguments);
+									isDoingOffRecordsMutations || logClaimedMutations("call "+propName, new Error().stack.replace(/^Error *\r?\n/i,''));
 									return result;
 								};
 								
@@ -356,7 +427,7 @@ void function() {
 							Object.defineProperty(proto, propName, { 
 								get() {
 									try {
-										let result = prop.get.apply(this,arguments);
+										let result = prop.get.apply(this.__this||this,arguments);
 										return result;
 									} catch (ex) {
 										if(ex.stack.indexOf("Illegal invocation")==-1) {
@@ -368,7 +439,7 @@ void function() {
 								},
 								set() {
 									isDoingOffRecordsMutations || logUnclaimedMutations();
-									let result = prop.set.apply(this,arguments);
+									let result = prop.set ? prop.set.apply(this.__this||this,arguments) : undefined;
 									isDoingOffRecordsMutations || logClaimedMutations("set "+propName, new Error().stack.replace(/^Error *\r?\n/i,''));
 									return result;
 								}
@@ -392,6 +463,7 @@ void function() {
 				get() {
 					try {
 						let result = prop.get.apply(this,arguments);
+						Object.defineProperty(result,'__this',{enumerable:false,value:result});
 						return wrapInProxy(
 							result,
 							propName,
@@ -429,7 +501,7 @@ void function() {
 					onbeforechange("set " + objName + "." + sKey);
 					var result = oTarget[sKey] = vValue;
 					onafterchange("set " + objName + "." + sKey);
-					return result;
+					return true;
 				  }
 				});
 				
