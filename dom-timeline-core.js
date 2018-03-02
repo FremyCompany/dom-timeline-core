@@ -84,6 +84,12 @@ var domTimelineOptions = domTimelineOptions || {
 void function() {
 	"use strict";
 	
+	// detect if we were already inserted, and abort if we were
+	if(window.domHistory && window.domHistory.past) {
+		console.error("DOM Timeline can only be loaded once. Options were reset, but beware that the old instance will still be used.");
+		return;
+	}
+	
 	// prepare to store the mutations
 	let recordingStartDate = (window.performance ? window.performance.now() : Date.now());
 	var domHistoryPast = [];
